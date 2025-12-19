@@ -1,84 +1,91 @@
 import streamlit as st
 import pandas as pd
+import os
 
 # 페이지 설정
 st.set_page_config(page_title="Global MBTI Dashboard", layout="wide")
 
+# 1. 파일 불러오기 (경로 문제 해결을 위한 로직 포함)
+FILE_NAME = 'countries.csv'
+
 @st.cache_data
 def load_data():
-    # 데이터 불러오기
-    df = pd.read_csv('countries.csv')
-    # MBTI 유형 컬럼들 (첫 번째 컬럼인 'Country' 제외)
-    mbti_cols = df.columns[1:]
+    if not os.path.exists(FILE_NAME):
+        return None, None
+    
+    df = pd.read_csv(FILE_NAME)
+    # MBTI 컬럼 추출 (첫 번째 'Country' 컬럼 제외)
+    mbti_cols = df.columns[1:].tolist()
     return df, mbti_cols
 
-try:
-    df, mbti_cols = load_data()
+df, mbti_cols = load_data()
 
-    st.title("🌏 전 세계 MBTI 성향 분석 대시보드")
-    st.markdown("업로드된 데이터를 기반으로 국가별 MBTI 분포와 순위를 분석합니다.")
+# 파일이 없을 경우 디버깅 메시지 출력
+if df is None:
+    st.error(f"❌ '{FILE_NAME}' 파일을 찾을 수 없습니다.")
+    st.info(f"현재 폴더의 파일 목록: {os.listdir('.')}")
+    st.warning("팁: 깃허브 저장소의 루트(최상위) 폴더에 파일이 있는지, 파일명이 정확히 'countries.csv'인지 확인해 주세요.")
+    st.stop()
 
-    # --- 1. 전체 국가 MBTI 평균 비율 ---
-    st.header("📊 전 세계 MBTI 평균 비율")
-    avg_ratios = df[mbti_cols].mean().sort_values(ascending=False)
-    st.bar_chart(avg_ratios)
-    
-    with st.expander("평균 데이터 보기"):
-        st.write(avg_ratios)
+# --- 앱 메인 화면 ---
+st.title("🌏 전 세계 MBTI 성향 분석 대시보드")
+st.markdown("전 세계 국가별 MBTI 분포 데이터를 분석하고 한국과 비교합니다.")
 
-    st.divider()
+# 2. 전체 국가 MBTI 평균 비율
+st.header("📊 1. 전 세계 MBTI 평균 비율")
+global_avg = df[mbti_cols].mean().sort_values(ascending=False)
+st.bar_chart(global_avg)
+with st.expander("평균 데이터 수치 보기"):
+    st.dataframe(global_avg.rename("Global Average Ratio"))
 
-    # --- 2. 국가별 MBTI 성향 분석 ---
-    st.header("🔍 국가별 상세 분석")
-    selected_country = st.selectbox("분석할 국가를 선택하세요", df['Country'].unique())
-    
-    country_data = df[df['Country'] == selected_country][mbti_cols].T
-    country_data.columns = ['Ratio']
-    country_data = country_data.sort_values(by='Ratio', ascending=False)
+st.divider()
 
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.subheader(f"{selected_country}의 MBTI TOP 5")
-        st.table(country_data.head(5))
-    with col2:
-        st.bar_chart(country_data)
+# 3. MBTI 유형별 높은 국가 TOP 10
+st.header("🏆 2. MBTI 유형별 국가 랭킹 (TOP 10)")
+selected_type = st.selectbox("순위를 확인할 MBTI 유형을 선택하세요", mbti_cols)
 
-    st.divider()
+top10 = df[['Country', selected_type]].sort_values(by=selected_type, ascending=False).head(10)
+st.subheader(f"'{selected_type}' 비율이 가장 높은 국가 TOP 10")
+st.bar_chart(top10.set_index('Country'))
 
-    # --- 3. MBTI 유형별 높은 국가 TOP 10 ---
-    st.header("🏆 MBTI 유형별 국가 랭킹 (TOP 10)")
-    selected_mbti = st.selectbox("순위를 확인할 MBTI 유형을 선택하세요", mbti_cols)
-    
-    top10_countries = df[['Country', selected_mbti]].sort_values(by=selected_mbti, ascending=False).head(10)
-    st.bar_chart(top10_countries.set_index('Country'))
+st.divider()
 
-    st.divider()
+# 4. 국가별 상세 분석 및 한국 비교
+st.header("🔍 3. 국가별 상세 분석 & 한국 비교")
 
-    # --- 4. 한국(South Korea) vs 선택 국가 비교 ---
-    st.header("🇰🇷 한국과의 비교 분석")
-    
-    # 한국 데이터 확인 (데이터셋 내 명칭 확인: South Korea, Korea 등)
-    korea_name = [c for c in df['Country'] if 'Korea' in c]
-    
+# 한국 데이터 찾기 (South Korea, Korea 등 포함된 이름 검색)
+korea_df = df[df['Country'].str.contains('Korea', case=False, na=False)]
+korea_name = korea_df['Country'].values[0] if not korea_df.empty else None
+
+# 분석할 국가 선택
+countries_list = df['Country'].unique().tolist()
+selected_country = st.selectbox("상세 분석할 국가를 선택하세요", countries_list, index=countries_list.index('United States') if 'United States' in countries_list else 0)
+
+col1, col2 = st.columns(2)
+
+# 선택 국가 데이터
+country_data = df[df['Country'] == selected_country][mbti_cols].T
+country_data.columns = [selected_country]
+
+with col1:
+    st.subheader(f"📍 {selected_country} 분석")
+    st.write(f"가장 많은 유형: **{country_data.idxmax()[0]}**")
+    st.bar_chart(country_data)
+
+# 한국과 비교
+with col2:
     if korea_name:
-        korea_data = df[df['Country'] == korea_name[0]][mbti_cols].T
-        korea_data.columns = ['South Korea']
+        st.subheader(f"🇰🇷 한국({korea_name})과 비교")
+        korea_data = df[df['Country'] == korea_name][mbti_cols].T
+        korea_data.columns = [korea_name]
         
-        # 비교군 설정
-        compare_data = pd.concat([korea_data, country_data], axis=1)
-        compare_data.columns = ['South Korea', selected_country]
+        comparison_df = pd.concat([korea_data, country_data], axis=1)
+        st.line_chart(comparison_df)
         
-        st.write(f"**한국({korea_name[0]})**과 **{selected_country}**의 유형별 비율 비교입니다.")
-        st.line_chart(compare_data)
-        
-        # 차이 분석
-        compare_data['Difference'] = (compare_data[selected_country] - compare_data['South Korea']).abs()
-        st.subheader("두 국가 간 가장 차이가 큰 유형")
-        st.table(compare_data.sort_values(by='Difference', ascending=False).head(5))
+        # 차이가 큰 유형 분석
+        comparison_df['Diff'] = (comparison_df[selected_country] - comparison_df[korea_name]).abs()
+        biggest_diff = comparison_df.sort_values(by='Diff', ascending=False).head(3)
+        st.write("두 국가 간 가장 차이가 큰 유형:")
+        st.write(", ".join(biggest_diff.index.tolist()))
     else:
-        st.warning("데이터셋에서 'Korea'를 찾을 수 없습니다. 국가명을 확인해주세요.")
-
-except FileNotFoundError:
-    st.error("`countries.csv` 파일을 찾을 수 없습니다. 파일이 앱과 같은 폴더에 있는지 확인해주세요.")
-except Exception as e:
-    st.error(f"오류가 발생했습니다: {e}")
+        st.warning("데이터에서 한국(Korea)을 찾을 수 없습니다.")
