@@ -1,113 +1,84 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 
-# 페이지 설정
-st.set_page_config(page_title="110년 기온 변화 분석", layout="wide")
+# 한글 폰트 설정 (Streamlit Cloud 환경 고려)
+# 기본적으로 맷플롯립은 한글이 깨질 수 있으나, 여기서는 영문 레이블을 병행하여 가독성을 높였습니다.
 
 def load_data():
-    """데이터를 로드하고 전처리하는 함수 (인코딩 자동 감지 추가)"""
-    file_name = "test.csv"
-    df = None
+    # 데이터 로드
+    df = pd.read_csv('test.csv')
     
-    # 시도할 인코딩 목록 (순서대로 시도합니다)
-    encodings = ['utf-8', 'cp949', 'euc-kr']
+    # 1. 날짜 컬럼의 공백 및 탭 제거 후 데이트타임 변환
+    df['날짜'] = df['날짜'].str.strip()
+    df['날짜'] = pd.to_datetime(df['날짜'])
     
-    for enc in encodings:
-        try:
-            # 해당 인코딩으로 읽기 시도
-            df = pd.read_csv(file_name, encoding=enc)
-            # 성공했다면 루프 탈출
-            break
-        except UnicodeDecodeError:
-            # 이 인코딩이 아니면 다음 것으로 넘어감
-            continue
-        except Exception as e:
-            st.error(f"파일 읽기 중 예상치 못한 오류 발생 ({enc}): {e}")
-            return None
-            
-    if df is None:
-        st.error(f"데이터를 읽을 수 없습니다. ({', '.join(encodings)} 모두 실패). 파일 인코딩을 확인해주세요.")
-        return None
-
-    # --- 데이터 전처리 로직 ---
-    try:
-        # 기상청 데이터 특유의 날짜 컬럼 깨짐('\t', '"') 해결
-        # 컬럼명에 공백이 있을 수 있으므로 공백 제거
-        df.columns = df.columns.str.strip()
-        
-        if '날짜' in df.columns:
-            # 문자열로 변환 후 불필요한 특수문자 제거
-            df['날짜'] = df['날짜'].astype(str).str.replace('\t', '').str.replace('"', '').str.strip()
-            # 날짜 형식으로 변환
-            df['날짜'] = pd.to_datetime(df['날짜'], errors='coerce')
-            
-        return df
-    except Exception as e:
-        st.error(f"데이터 전처리 중 오류가 발생했습니다: {e}")
-        return None
-
-# 메인 타이틀
-st.title("🌡️ 지난 110년, 기온은 정말 상승했을까?")
-st.markdown("업로드된 데이터를 기반으로 연도별 평균 기온 변화를 분석합니다.")
-
-# 데이터 로드
-df = load_data()
-
-if df is not None:
-    # 연도 컬럼 생성
-    df['년도'] = df['날짜'].dt.year
-
-    # 1. 연도별 평균 기온 계산
-    # 결측치(NaN)가 있는 행은 제외하고 계산
-    # 컬럼명이 정확한지 확인 (공백 제거 등)
-    temp_col = '평균기온(℃)'
-    if temp_col not in df.columns:
-        # 혹시 컬럼명이 다를 경우를 대비해 비슷한 컬럼 찾기
-        cols = [c for c in df.columns if '평균기온' in c]
-        if cols:
-            temp_col = cols[0]
+    # 2. 분석을 위해 '연도' 컬럼 생성
+    df['연도'] = df['날짜'].dt.year
     
-    if temp_col in df.columns:
-        yearly_avg = df.groupby('년도')[temp_col].mean().reset_index()
-        yearly_avg.columns = ['년도', '연평균기온']
+    # 3. 결측치 제거 (기온 데이터가 없는 행은 제외)
+    df = df.dropna(subset=['평균기온(℃)'])
+    
+    return df
 
-        # 2. 10년 이동 평균 계산 (장기 추세선)
-        yearly_avg['10년 이동평균'] = yearly_avg['연평균기온'].rolling(window=10).mean()
+# 앱 제목
+st.title("🌡️ 지난 110년간 기온 변화 분석기")
+st.markdown("업로드된 데이터를 바탕으로 장기적인 기온 상승 추세를 확인합니다.")
 
-        # 3. 데이터 시각화 준비
-        chart_data = yearly_avg.set_index('년도')
+try:
+    df = load_data()
 
-        # --- 화면 구성 ---
-        
-        # [섹션 1] 핵심 지표 비교
-        st.subheader("📊 과거와 현재 비교")
-        
-        start_year = yearly_avg['년도'].min()
-        end_year = yearly_avg['년도'].max()
-        
-        past_mean = yearly_avg[yearly_avg['년도'] <= start_year + 10]['연평균기온'].mean()
-        recent_mean = yearly_avg[yearly_avg['년도'] >= end_year - 10]['연평균기온'].mean()
-        diff = recent_mean - past_mean
+    # --- 데이터 요약 ---
+    st.subheader("1. 데이터 요약")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("시작 연도", int(df['연도'].min()))
+    col2.metric("종료 연도", int(df['연도'].max()))
+    col3.metric("총 데이터 수", f"{len(df):,}")
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric(label=f"과거 10년 평균 ({start_year}~)", value=f"{past_mean:.1f} ℃")
-        col2.metric(label=f"최근 10년 평균 (~{end_year})", value=f"{recent_mean:.1f} ℃")
-        col3.metric(label="기온 상승폭", value=f"{diff:.1f} ℃", delta=f"{diff:.1f} ℃")
+    # --- 연도별 평균 기온 계산 ---
+    annual_temp = df.groupby('연도')['평균기온(℃)'].mean().reset_index()
 
-        st.divider()
+    # --- 시각화 ---
+    st.subheader("2. 연도별 평균 기온 추이")
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(annual_temp['연도'], annual_temp['평균기온(℃)'], marker='o', markersize=2, linestyle='-', color='red', alpha=0.7)
+    
+    # 추세선 추가 (간단한 이동평균)
+    annual_temp['추세선'] = annual_temp['평균기온(℃)'].rolling(window=10).mean()
+    ax.plot(annual_temp['연도'], annual_temp['추세선'], color='black', linewidth=2, label='10-Year Moving Avg')
 
-        # [섹션 2] 그래프 시각화
-        st.subheader("📈 연도별 기온 변화 추세")
-        st.caption("파란선: 해당 연도의 평균 기온 / 붉은선: 10년 이동 평균(장기 추세)")
-        
-        st.line_chart(chart_data[['연평균기온', '10년 이동평균']], color=["#85C1E9", "#FF5733"])
+    ax.set_xlabel("Year")
+    ax.set_ylabel("Avg Temperature (℃)")
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.legend()
+    
+    st.pyplot(fig)
 
-        # [섹션 3] 데이터 확인
-        with st.expander("분석에 사용된 연도별 데이터 보기"):
-            st.dataframe(yearly_avg.style.format("{:.2f}"))
+    # --- 분석 결과 ---
+    st.subheader("3. 기온 변화 분석")
+    
+    first_year = annual_temp['연도'].min()
+    last_year = annual_temp['연도'].max()
+    
+    # 초기 10년 vs 최근 10년 비교
+    start_avg = annual_temp.head(10)['평균기온(℃)'].mean()
+    end_avg = annual_temp.tail(10)['평균기온(℃)'].mean()
+    diff = end_avg - start_avg
+
+    st.write(f"📊 **{int(first_year)}년경**의 10년 평균 기온: `{start_avg:.2f}℃` 쪽")
+    st.write(f"📊 **{int(last_year)}년경**의 10년 평균 기온: `{end_avg:.2f}℃` 쪽")
+    
+    if diff > 0:
+        st.error(f"결과: 약 110년 동안 평균 기온이 **{diff:.2f}℃ 상승**했습니다. 지구 온난화 경향이 뚜렷합니다.")
     else:
-        st.error(f"'{temp_col}' 컬럼을 찾을 수 없습니다. 데이터 파일의 컬럼명을 확인해주세요.")
-        st.write("현재 컬럼 목록:", df.columns.tolist())
+        st.success(f"결과: 평균 기온이 약 {abs(diff):.2f}℃ 하락했거나 큰 변화가 없습니다.")
 
-else:
-    st.warning("데이터 파일을 읽을 수 없습니다. test.csv 파일이 같은 폴더에 있는지 확인해주세요.")
+    # 데이터 표 보여주기
+    if st.checkbox("상세 데이터 보기"):
+        st.write(annual_temp)
+
+except FileNotFoundError:
+    st.error("파일을 찾을 수 없습니다. 'test.csv' 파일이 같은 폴더에 있는지 확인해주세요.")
+except Exception as e:
+    st.error(f"오류가 발생했습니다: {e}")
